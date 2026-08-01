@@ -114,20 +114,21 @@ def simulate(orh, ork_file):
 
 
 #open the OpenRocket engine once, then call simulate() inside it
-with orlab.OpenRocketInstance(JAR_FILE, log_level="ERROR") as instance:
-    orh = orlab.Helper(instance)
-    results = simulate(orh, ORK_FILE)
+if __name__ == "__main__":
+    with orlab.OpenRocketInstance(JAR_FILE, log_level="ERROR") as instance:
+        orh = orlab.Helper(instance)
+        results = simulate(orh, ORK_FILE)
 
-    print(f"Apogee (m):                    {results['apogee']:.1f}")
-    print(f"Stability (cal):               {results['stability']:.2f}")
-    print(f"Launch Temperature (F):        {results['launch_temp_f']:.1f}")
-    print(f"Altitude at max velocity (m):  {results['altitude_max_velocity']:.1f}")
-    print(f"Tip Chord (in):                {results['tip_chord']:.3f}")
-    print(f"Root Chord (in):               {results['root_chord']:.3f}")
-    print(f"Fin height / semi-span (in):   {results['height']:.3f}")
-    print(f"Fin thickness (in):            {results['thickness']:.3f}")
-    print(f"Sweep Length (in):             {results['sweep_length']:.3f}")
-    print(f"Fin Area (in^2):               {results['fin_area']:.3f}")
-    print(f"Pressure at max velocity (psi):{results['pressure_max_velocity']:.3f}")
-    print(f"Launch Pressure (psi):         {results['launch_pressure']:.3f}")
-    print(f"Speed of Sound (ft/s):         {results['speed_of_sound']:.1f}")
+        print(f"Apogee (m):                    {results['apogee']:.1f}")
+        print(f"Stability (cal):               {results['stability']:.2f}")
+        print(f"Launch Temperature (F):        {results['launch_temp_f']:.1f}")
+        print(f"Altitude at max velocity (m):  {results['altitude_max_velocity']:.1f}")
+        print(f"Tip Chord (in):                {results['tip_chord']:.3f}")
+        print(f"Root Chord (in):               {results['root_chord']:.3f}")
+        print(f"Fin height / semi-span (in):   {results['height']:.3f}")
+        print(f"Fin thickness (in):            {results['thickness']:.3f}")
+        print(f"Sweep Length (in):             {results['sweep_length']:.3f}")
+        print(f"Fin Area (in^2):               {results['fin_area']:.3f}")
+        print(f"Pressure at max velocity (psi):{results['pressure_max_velocity']:.3f}")
+        print(f"Launch Pressure (psi):         {results['launch_pressure']:.3f}")
+        print(f"Speed of Sound (ft/s):         {results['speed_of_sound']:.1f}")
