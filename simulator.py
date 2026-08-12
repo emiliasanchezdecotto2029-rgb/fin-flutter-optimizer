@@ -1,5 +1,5 @@
 """
-First version of python file that aims to be able to calculate stability and altitude from an Open Rocket File.
+Calculates stability and altitude from an Open Rocket File.
 
 Split into cheap (no flight sim) and expensive (needs run_simulation) functions
 so the optimizer can gate on cheap checks before paying for a flight sim.
@@ -9,11 +9,10 @@ import orlab
 import numpy as np
 
 JAR_FILE = "OpenRocket-23.09.jar"
-ORK_FILE = "stars_rocket.ork"
+ORK_FILE = "IREC_current.ork"
 
 #---- unit conversion constants ----
 M_TO_IN = 39.3701          # meters -> inches
-M2_TO_IN2 = 1550.0031      # square meters -> square inches (39.3701^2)
 PA_TO_PSI = 0.000145038    # pascals -> psi
 
 
@@ -98,10 +97,10 @@ def get_flight_data(orh, doc):
     #####################
     #GET ALTITUDE AT TIME OF MAX VELOCITY
     #first extract time at which maximum velocity is reached
-    data_velocity = orh.get_timeseries(sim, ["TYPE_VELOCITY_Z"])
-    velocities = data_velocity["TYPE_VELOCITY_Z"]
-    time_max_velocity = np.where(velocities == max(velocities))[0][0]  # scalar index of max velocity
-    max_velocity = max(velocities)  # max vertical velocity (m/s)
+    data_velocity = orh.get_timeseries(sim, ["TYPE_VELOCITY_TOTAL"])
+    velocities = data_velocity["TYPE_VELOCITY_TOTAL"]
+    time_max_velocity = int(np.argmax(velocities))
+    max_velocity = velocities[time_max_velocity] 
 
     #then get the altitude at that time
     altitudes = data_altitudes["TYPE_ALTITUDE"]
@@ -117,9 +116,9 @@ def get_flight_data(orh, doc):
 
     #####################
     #SPEED OF SOUND at max-velocity altitude (ft/sec)
-    #T_F at altitude = 59 - (0.00356 * altitude in ft)   [ASL, default sea level temp]
+    #standard lapse rate from launch temp
     altitude_max_velocity_ft = altitude_max_velocity * 3.28084
-    temp_at_altitude_f = 59 - (0.00356 * altitude_max_velocity_ft)
+    temp_at_altitude_f = launch_temp_f - (0.00356 * altitude_max_velocity_ft)
     speed_of_sound = 49.03 * np.sqrt(459.7 + temp_at_altitude_f)
 
     return {
@@ -158,3 +157,5 @@ if __name__ == "__main__":
         print(f"Pressure at max velocity (psi):{results['pressure_max_velocity']:.3f}")
         print(f"Launch Pressure (psi):         {results['launch_pressure']:.3f}")
         print(f"Speed of Sound (ft/s):         {results['speed_of_sound']:.1f}")
+
+        

@@ -1,11 +1,9 @@
 """
 Uses data from simulator.py to calculate fin flutter per corrected NACA method
 """
-
 import orlab
 import math
 from simulator import get_stability, get_fin_dimensions, get_flight_data, JAR_FILE, ORK_FILE
-
 
 def calculate_flutter(values, shear_modulus=3700000):
     # shear_modulus default for: ALUMINUM 6061-T6 (PSI)
@@ -17,7 +15,6 @@ def calculate_flutter(values, shear_modulus=3700000):
     sweep_length = values["sweep_length"]
     fin_area = values["fin_area"]
     pressure_max_velocity = values["pressure_max_velocity"]
-    launch_pressure = values["launch_pressure"]
     speed_of_sound = values["speed_of_sound"]
 
     #############################
@@ -33,7 +30,7 @@ def calculate_flutter(values, shear_modulus=3700000):
     epsilon = (Cx / RC) - 0.25
 
     #Denominator Constant
-    DN = (24 * epsilon * 1.4 * 14.696) / 3.141592653589793
+    DN = (24 * epsilon * 1.4 * 14.696) / math.pi
 
     #ASPECT RATIO
     A = (height**2)/fin_area

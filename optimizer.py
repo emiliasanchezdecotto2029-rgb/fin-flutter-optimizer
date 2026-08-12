@@ -1,16 +1,17 @@
 """
-optimizer.py — brute-force search over fin dimensions to find the design
-that maximizes apogee while meeting minimum stability and a flutter safety margin.
+searches fin dimensions to find the design that maximizes apogee while meeting 
+minimum stability and a flutter safety margin. All candidates written to csv file.
 
-Cascade (cheap checks first, expensive last):
+Steps:
   1. set the candidate fin dimensions
-  2. get_stability()  -> cheap, no flight sim. If below MIN_STABILITY, skip.
-  3. get_flight_data() -> the expensive flight sim (gives apogee, max velocity,
+  2. get_stability()  -> no flight sim. If below MIN_STABILITY, don't consider.
+  3. get_flight_data() -> expensive flight sim (gives apogee, max velocity,
      AND the speed-of-sound / pressure that flutter needs)
-  4. calculate_flutter() -> flutter velocity must beat max velocity by FLUTTER_MARGIN.
-  5. survivors: record apogee, compare, keep the best.
+  4. calculate_flutter() -> flutter velocity must be above max velocity by a 50% margin
+  5. for remaining fin dimensions, record apogee, keep the best.
 """
 
+import csv
 import orlab
 import numpy as np
 
@@ -25,122 +26,160 @@ from simulator import (
 )
 from flutter import calculate_flutter
 
-#=====================================================================
-#  PARAMETERS
-#=====================================================================
+#PARAMETERS
+#------------------------------------------------------------
 
-# minimum acceptable static stability
-MIN_STABILITY = 1.5   # calibers
+#for saving results to CSV
+RESULTS_CSV = "results.csv"
+FIELDNAMES = [
+    "status",
+    "root_chord", "tip_chord", "height", "sweep_length", "thickness", "fin_area",
+    "stability", "sim",
+    "apogee_m", "apogee_ft",
+    "max_velocity_fts", "flutter_velocity_fts", "flutter_ratio"
+]
 
-# flutter safety margin: flutter velocity must be at least this factor
-# above the rocket's max velocity. 1.5 = 50% margin.
+#max unsupported fin extending past the aft end of the root, inches
+#(sweep + tip_chord - root_chord). the 2026 flown fins have 2.0
+MAX_OVERHANG = 2.0
+
+#taper ratio below ~0.2 the tip gets thin and flutter-prone; 
+# literature suggests ~0.4 for an elliptical lift distribution
+MIN_TAPER = 0.2
+
+#mnimum stability threshold
+MIN_STABILITY = 1.5 
+
+# flutter margin: flutter velocity must be at least this factor
 FLUTTER_MARGIN = 1.5
 
-# m/s -> ft/s  (max_velocity comes from OpenRocket in m/s; flutter is in ft/s)
+# m/s -> ft/s
 MS_TO_FTS = 3.28084
 
-ROOT_CHORD_RANGE = np.linspace(8.0, 10.0, 3)    # inches
-TIP_CHORD_RANGE = np.linspace(1.0, 8.0, 8)      # inches
-HEIGHT_RANGE = np.linspace(4.5, 5.5, 5)         # inches (semi-span)
-SWEEP_RANGE = np.linspace(0.0, 8.0, 17)          # inches
-THICKNESS_RANGE = np.linspace(0.125, 0.25, 3)    # inches
+#inches:
+ROOT_CHORD_RANGE = np.linspace(8.0, 12.0, 9)     #8" floor from fin tab geometry
+TIP_CHORD_RANGE = np.linspace(1.0, 8.0, 8)     
+HEIGHT_RANGE = np.linspace(5.25, 6.0, 4)         #>= 1 caliber (5.15" OD)
+SWEEP_RANGE = np.linspace(0.0, 12.0, 13)         
+THICKNESS_RANGE = np.linspace(0.125, 0.25, 3)
 
-#=====================================================================
-#  HELPER — set fin dimensions on the rocket
-#=====================================================================
-
+#set fin dimensions on the rocket
 def set_fin_dimensions(fins, root_chord, tip_chord, height, sweep, thickness):
-    """
-    Set the fin geometry. Values passed IN are in inches; OpenRocket wants meters.
-    TODO: fill in the actual setter calls (fins.setRootChord(...), etc.)
-          remember to convert inches -> meters (divide by M_TO_IN).
-    """
     fins.setRootChord(root_chord / M_TO_IN)
     fins.setTipChord(tip_chord / M_TO_IN)
     fins.setHeight(height / M_TO_IN)
     fins.setSweep(sweep / M_TO_IN)
     fins.setThickness(thickness / M_TO_IN)
 
-#=====================================================================
-#  MAIN OPTIMIZER
-#=====================================================================
+#optimization process
+if __name__ == "__main__":
+    with orlab.OpenRocketInstance(JAR_FILE, log_level="ERROR") as instance, \
+            open(RESULTS_CSV, "w", newline="") as csvfile:
 
-with orlab.OpenRocketInstance(JAR_FILE, log_level="ERROR") as instance:
-    orh = orlab.Helper(instance)
-    doc = orh.load_doc(ORK_FILE)
-    rocket = doc.getRocket()
-    fins = get_fins(rocket)
+        writer = csv.DictWriter(csvfile, fieldnames=FIELDNAMES)
+        writer.writeheader()
 
-    # keep the best design found so far
-    best = None          # will hold a dict of the winning design
-    best_apogee = -1.0
+        orh = orlab.Helper(instance)
+        doc = orh.load_doc(ORK_FILE)
+        rocket = doc.getRocket()
+        fins = get_fins(rocket)
 
-    results = []         # every feasible design, for later inspection
+        # keep the best design found so far
+        best = None          
+        best_apogee = -1.0
 
-    # ---- sweep every combination ----
-    for root_chord in ROOT_CHORD_RANGE:
-        for tip_chord in TIP_CHORD_RANGE:
+        #every feasible design goes here
+        results = []         
 
-            # a trapezoidal fin can't have tip wider than root — skip impossible shapes
-            if tip_chord > root_chord:
-                continue
+        #sweeping combinations
+        for root_chord in ROOT_CHORD_RANGE:
+            for tip_chord in TIP_CHORD_RANGE:
 
-            for height in HEIGHT_RANGE:
-                for sweep in SWEEP_RANGE:
-                    for thickness in THICKNESS_RANGE:
+                #taper ratio floor (also rules out tip wider than root)
+                if tip_chord / root_chord < MIN_TAPER:
+                    continue
 
-                        # 1. UPDATE ROCKET WITH THESE FIN DIMENSIONS
-                        set_fin_dimensions(fins, root_chord, tip_chord,
-                                           height, sweep, thickness)
+                for height in HEIGHT_RANGE:
+                    for sweep in SWEEP_RANGE:
 
-                        # 2. CHECK FOR MIN STABILITY REQUIREMENT (NO SIMULATION RUNNING)
-                        stability = get_stability(orh, rocket)
-                        if stability < MIN_STABILITY:
-                            continue   # reject without ever running a flight sim
-
-                        # 3. MORE TIME-CONSUMING FLIGHT SIM gives apogee, max velocity,
-                        #    and the flutter inputs
-                        flight = get_flight_data(orh, doc)
-                        dims = get_fin_dimensions(rocket)
-                        values = {**dims, **flight}
-
-                        # 4. flutter velocity must beat max velocity by 50% margin
-                        # (convert max velocity m/s -> ft/s)
-                        flutter_velocity = calculate_flutter(values)
-                        max_velocity_fts = values["max_velocity"] * MS_TO_FTS
-                        if flutter_velocity < max_velocity_fts * FLUTTER_MARGIN:
+                        #reject unbuildable overhang
+                        if sweep + tip_chord - root_chord > MAX_OVERHANG:
                             continue
+                        for thickness in THICKNESS_RANGE:
 
-                        # 5. survivor — record it and compare
-                        apogee = values["apogee"]
-                        design = {
-                            "root_chord": root_chord,
-                            "tip_chord": tip_chord,
-                            "height": height,
-                            "sweep": sweep,
-                            "thickness": thickness,
-                            "stability": stability,
-                            "max_velocity_fts": max_velocity_fts,
-                            "flutter_velocity": flutter_velocity,
-                            "apogee": apogee,
-                        }
-                        results.append(design)
+                            #Update OpenRocket with FinDimensions
+                            set_fin_dimensions(fins, root_chord, tip_chord,
+                                            height, sweep, thickness)
 
-                        if apogee > best_apogee:
-                            best_apogee = apogee
-                            best = design
+                            #Cheap stability check (no sim)
+                            stability = get_stability(orh, rocket)
+                            dims = get_fin_dimensions(rocket)
 
-    # ---- report ----
-    print("\n===== SEARCH COMPLETE =====")
-    print(f"Feasible designs found: {len(results)}")
-    if best is not None:
-        print("\nBEST DESIGN (highest apogee meeting stability + flutter margin):")
-        for k, v in best.items():
-            if k == "apogee":
-                print(f"  apogee (ft): {v * 3.28084:.1f}")
-            else:
-                print(f"  {k}: {v:.3f}")
-    else:
-        print("No design met the stability and flutter requirements.")
+                            if stability < MIN_STABILITY:
+                                writer.writerow({
+                                    "status": "rejected_stability",
+                                    "root_chord": dims["root_chord"],
+                                    "tip_chord": dims["tip_chord"],
+                                    "height": dims["height"],
+                                    "sweep_length": dims["sweep_length"],
+                                    "thickness": dims["thickness"],
+                                    "fin_area": dims["fin_area"],
+                                    "stability": stability,
+                                    "sim": False,
+                                })
+                                csvfile.flush()
+                                continue
 
-        
+                            #Flight sim gives apogee, max velocity, flutter values
+                            flight = get_flight_data(orh, doc)
+                            values = {**dims, **flight}
+
+                            #flutter check
+                            flutter_velocity = calculate_flutter(values)
+                            max_velocity_fts = values["max_velocity"] * MS_TO_FTS
+                            flutter_ratio = flutter_velocity / max_velocity_fts
+                            apogee = values["apogee"]
+
+                            row = {
+                                "root_chord": dims["root_chord"],
+                                "tip_chord": dims["tip_chord"],
+                                "height": dims["height"],
+                                "sweep_length": dims["sweep_length"],
+                                "thickness": dims["thickness"],
+                                "fin_area": dims["fin_area"],
+                                "stability": stability,
+                                "sim": True,
+                                "apogee_m": apogee,
+                                "apogee_ft": apogee * 3.28084,
+                                "max_velocity_fts": max_velocity_fts,
+                                "flutter_velocity_fts": flutter_velocity,
+                                "flutter_ratio": flutter_ratio,
+                            }
+
+                            if flutter_ratio < FLUTTER_MARGIN:
+                                writer.writerow({"status": "rejected_flutter", **row})
+                                csvfile.flush()
+                                continue
+
+                            row["status"] = "feasible"
+                            writer.writerow(row)
+                            csvfile.flush()
+
+                            #record surviving designs and compare
+                            results.append(row)
+
+                            if apogee > best_apogee:
+                                best_apogee = apogee
+                                best = row
+
+        #printing results
+        print("\nRESULTS")
+        print(f"Feasible designs found: {len(results)}")
+        if best is not None:
+            print("\nOPTIMAL DESIGN:")
+            for k in ("root_chord", "tip_chord", "height", "sweep_length",
+                      "thickness", "stability", "max_velocity_fts",
+                      "flutter_velocity_fts", "flutter_ratio", "apogee_ft"):
+                print(f"  {k}: {best[k]:.3f}")
+        else:
+            print("0 designs met requirements")
